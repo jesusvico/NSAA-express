@@ -56,7 +56,7 @@ app.get('/', (req, res) => {
 
 app.get('/login',
   (req, res) => {
-    res.sendFile('login.html', { root: __dirname })
+    res.sendFile('pages/login.html', { root: __dirname })
   }
 )
 
