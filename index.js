@@ -61,6 +61,14 @@ app.get('/login',
   }
 )
 
+app.get('/logout',
+  (req, res) => {
+    // Reset cookie and redirect to the login page
+    res.clearCookie('session')
+    res.redirect('/login')
+  }
+)
+
 app.post('/login', 
   passport.authenticate('username-password', { failureRedirect: '/login', session: false }), // we indicate that this endpoint must pass through our 'username-password' passport strategy, which we defined before
   (req, res) => { 
