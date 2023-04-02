@@ -1,0 +1,2 @@
+fast:$scrypt$ln=16,r=8,p=1$P+Pvx55uyIycj65vez4ClA$iXZWLcAV+89QUzpqrfMU/wafFfHN/KhPF2l8amFHHl2xwytKb483reJUDDcsSma2Yg6no113rMaTXh6a1Uwbkw
+slow:$scrypt$ln=20,r=8,p=2$rF48UYO2gE7zb7M6PAfhfA$9quO4GlKXpM4cdMw24F6ti6eFeKngvPy33Z0N+1QoP1qrNMZ6qHo0Nm5jdCZ1kI4tSr7MD0RFo/dBvHZvizohg

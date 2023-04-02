@@ -6,6 +6,17 @@ const jwt = require('jsonwebtoken')
 const jwtSecret = require('crypto').randomBytes(16) // 16*8=256 random bits
 const cookieParser = require('cookie-parser')
 const fortune = require('fortune-teller')
+const scryptMcf = require('scrypt-mcf')
+const fs = require('fs');
+const { performance } = require('perf_hooks');
+
+// Fast setup
+const fastParams = {logN: 16, r: 8, p: 1};
+
+// Slow setup 
+const slowParams = {logN: 20, r: 8, p: 2};
+
+const salt = Buffer.from('0123456789abcdef', 'hex');
 
 const app = express()
 const port = 3000
@@ -26,10 +37,31 @@ passport.use('username-password', new LocalStrategy(
     passwordField: 'password',  // it MUST match the name of the input field for the password in the login HTML formulary
     session: false // we will store a JWT in the cookie with all the required session data. Our server does not need to keep a session, it's going to be stateless
   },
-  function (username, password, done) {
-    if (username === 'walrus' && password === 'walrus') {
+  async (username, password, done) => {
+    // Check usernames and passwords
+    const usersData = fs.readFileSync('users.txt', 'utf8');
+    const users = usersData.trim().split('\n').map(line => {
+      const [username, hashedPass] = line.trim().split(':');
+      return { username, hashedPass };
+    });
+
+    var user = null;
+    for (const testUser of users) {
+      if(testUser.username !== username) continue;
+      const start = performance.now();
+      const result = await scryptMcf.verify(password, testUser.hashedPass)
+      const end = performance.now();
+      const elapsed = end - start;
+      console.log(`KDF speed: ${elapsed} milliseconds`);
+      if(result) {
+        user = testUser;
+        break;
+      }
+    }
+
+    if (user) {
       const user = { 
-        username: 'walrus',
+        username: username,
         description: 'the only user that deserves to contact the fortune teller'
       }
       return done(null, user) // the first argument for done is the error, if any. In our case there is no error, and so we pass null. The object user will be added by the passport middleware to req.user and thus will be available there for the next middleware and/or the route handler 
