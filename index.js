@@ -5,6 +5,7 @@ const LocalStrategy = require('passport-local').Strategy
 const jwt = require('jsonwebtoken')
 const jwtSecret = require('crypto').randomBytes(16) // 16*8=256 random bits
 const cookieParser = require('cookie-parser')
+const fortune = require('fortune-teller')
 
 const app = express()
 const port = 3000
@@ -49,7 +50,7 @@ app.get('/', (req, res) => {
     } else {
       console.log('Valid token')
       console.log(decoded)
-      res.send('Valid token')
+      res.send(fortune.fortune())
     }
   })
 })
