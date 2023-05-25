@@ -9,20 +9,25 @@ const fortune = require('fortune-teller')
 const scryptMcf = require('scrypt-mcf')
 const fs = require('fs');
 const { performance } = require('perf_hooks');
-
-// Fast setup
-const fastParams = {logN: 16, r: 8, p: 1};
-
-// Slow setup 
-const slowParams = {logN: 20, r: 8, p: 2};
-
-const salt = Buffer.from('0123456789abcdef', 'hex');
+const OAuth2Strategy = require('passport-oauth2');
+const path = require('path');
 
 const app = express()
 const port = 3000
 
-app.use(logger('dev'))
-app.use(cookieParser())
+app.use(logger('dev')); // Logs for development
+app.use(cookieParser()); // Parse cookies correctly
+
+// Custom middleware to check if cookies are valid
+const isAuthenticated = (req, res, next) => {
+  // Store the decoded cookies in req.user
+  if (req.cookies.session) {
+    jwt.verify(req.cookies.session, jwtSecret, (err, decoded) => { if (!err) req.user = decoded.sub; })
+  }
+
+  if (req.user) next(); // User is logged in
+  else res.redirect('/auth/error'); // Redirect to login route
+};
 
 /*
   Configure the local strategy for using it in Passport.
@@ -47,44 +52,67 @@ passport.use('username-password', new LocalStrategy(
 
     var user = null;
     for (const testUser of users) {
-      if(testUser.username !== username) continue;
-      const start = performance.now();
+      if (testUser.username !== username) continue;
       const result = await scryptMcf.verify(password, testUser.hashedPass)
-      const end = performance.now();
-      const elapsed = end - start;
-      console.log(`KDF speed: ${elapsed} milliseconds`);
-      if(result) {
+      if (result) {
         user = testUser;
-        break;
+        return done(null, user); // Return the user
+      } else {
+        return done(null, false) // The password is not valid
       }
     }
-
-    if (user) {
-      const user = { 
-        username: username,
-        description: 'the only user that deserves to contact the fortune teller'
-      }
-      return done(null, user) // the first argument for done is the error, if any. In our case there is no error, and so we pass null. The object user will be added by the passport middleware to req.user and thus will be available there for the next middleware and/or the route handler 
-    }
-    return done(null, false)  // in passport returning false as the user object means that the authentication process failed. 
-  }
-))
-
-app.use(express.urlencoded({ extended: true })) // needed to retrieve html form fields (it's a requirement of the local strategy)
-app.use(passport.initialize())  // we load the passport auth middleware to our express application. It should be loaded before any route.
-
-app.get('/', (req, res) => {
-  console.log(req.cookies)
-  jwt.verify(req.cookies.session, jwtSecret, (err, decoded) => {
-    if (err) {
-      console.log('Invalid token')
-      res.redirect('/login')
-    } else {
-      console.log('Valid token')
-      console.log(decoded)
-      res.send(fortune.fortune())
-    }
+    return done(null, false) // The user does not exist
   })
+);
+
+// OAuth2 strategy configuration
+passport.use('oauth2-github', new OAuth2Strategy(
+  {
+    authorizationURL: 'https://github.com/login/oauth/authorize',
+    tokenURL: 'https://github.com/login/oauth/access_token',
+    clientID: '468283da79286228955a',
+    clientSecret: process.env.GITHUB_CLIENT_SECRET,
+    callbackURL: 'http://localhost:3000/auth/github/callback'
+  },
+(accessToken, refreshToken, profile, done) => {
+  // OAuth2 does not provide any information about the user. We only know a unique access token
+  // We use that access token to identify the user
+  profile = { accessToken: accessToken }
+  return done(null, profile);
+})
+);
+
+// Generate the session token. The identifier must be a unique string for every user.
+const addSessionJWT = (res, identifier) => {
+  // This is what ends up in our JWT
+  const jwtClaims = {
+    sub: identifier,
+    iss: 'localhost:3000',
+    aud: 'localhost:3000',
+    exp: Math.floor(Date.now() / 1000) + 604800, // 1 week (7×24×60×60=604800s) from now
+    role: 'user' // just to show a private JWT field
+  }
+
+  // generate a signed json web token. By default the signing algorithm is HS256 (HMAC-SHA256), i.e. we will 'sign' with a symmetric secret
+  const token = jwt.sign(jwtClaims, jwtSecret)
+
+  // Store the token in a cookie
+  const options = {
+    httpOnly: true,
+    secure: false, // Set to true if using HTTPS (it is false to make it work with Safari https://github.com/sveltejs/kit/issues/6632)
+    maxAge: 1000 * 60 * 60 * 24, // Cookie expires in 1 day
+  }
+
+  res.cookie('session', token, options);
+}
+
+app.use(express.urlencoded({ extended: true })) // Needed to retrieve html form fields (it's a requirement of the local strategy)
+app.use(passport.initialize())  // We load the passport auth middleware to our express application. It should be loaded before any route.
+
+
+// Routes
+app.get('/', isAuthenticated, (req, res) => {
+  res.send(fortune.fortune());
 })
 
 app.get('/login',
@@ -93,6 +121,10 @@ app.get('/login',
   }
 )
 
+// Error routes
+app.get('/auth/error', (req, res) => res.send('Authentication Error'));
+
+// Logout route
 app.get('/logout',
   (req, res) => {
     // Reset cookie and redirect to the login page
@@ -101,38 +133,26 @@ app.get('/logout',
   }
 )
 
-app.post('/login', 
-  passport.authenticate('username-password', { failureRedirect: '/login', session: false }), // we indicate that this endpoint must pass through our 'username-password' passport strategy, which we defined before
-  (req, res) => { 
-    // This is what ends up in our JWT
-    const jwtClaims = {
-      sub: req.user.username,
-      iss: 'localhost:3000',
-      aud: 'localhost:3000',
-      exp: Math.floor(Date.now() / 1000) + 604800, // 1 week (7×24×60×60=604800s) from now
-      role: 'user' // just to show a private JWT field
-    }
-
-    // generate a signed json web token. By default the signing algorithm is HS256 (HMAC-SHA256), i.e. we will 'sign' with a symmetric secret
-    const token = jwt.sign(jwtClaims, jwtSecret)
-
-    // Store the token in a cookie
-    const options = {
-      httpOnly: true,
-      secure: true, // Set to true if using HTTPS
-      maxAge: 1000 * 60 * 60 * 24 // Cookie expires in 1 day
-    }
-    res.cookie('session', token, options)
-
-    // From now, just send the JWT directly to the browser. Later, you should send the token inside a cookie.
-    //res.json(token)
+// Authentication routes
+app.post('/login',
+  passport.authenticate('username-password', { failureRedirect: '/auth/error', session: false }), // we indicate that this endpoint must pass through our 'username-password' passport strategy, which we defined before
+  (req, res) => {
+    addSessionJWT(res, req.user.username);
     res.redirect('/');
-    
-    // And let us log a link to the jwt.io debugger, for easy checking/verifying:
-    console.log(`Token sent. Debug at https://jwt.io/?value=${token}`)
-    console.log(`Token secret (for verifying the signature): ${jwtSecret.toString('base64')}`)
   }
 )
+
+app.get('/auth/github', passport.authenticate('oauth2-github', { failureRedirect: '/auth/error', session: false }));
+app.get(
+  '/auth/github/callback',
+  passport.authenticate('oauth2-github', {
+    failureRedirect: '/auth/error',
+    session: false, // Disable session support 
+  }),
+  (req, res) => {
+    addSessionJWT(res, req.user.accessToken);
+    res.redirect('/');
+  });
 
 app.use(function (err, req, res, next) {
   console.error(err.stack)
@@ -142,3 +162,4 @@ app.use(function (err, req, res, next) {
 app.listen(port, () => {
   console.log(`Example app listening at http://localhost:${port}`)
 })
+
