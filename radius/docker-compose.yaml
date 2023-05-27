@@ -1,0 +1,13 @@
+services:
+  radius:
+    container_name: radius
+    image: nsaa/radius
+    build: .
+    tty: true
+    stdin_open: true
+    volumes:
+      - ./users:/etc/freeradius/3.0/users
+      - ./clients.conf:/etc/freeradius/3.0/clients.conf
+    ports:
+      - 1812:1812/udp
+      - 1813:1813/udp

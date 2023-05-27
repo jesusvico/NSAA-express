@@ -21,6 +21,7 @@
     "passport-jwt": "^4.0.1",
     "passport-local": "^1.0.0",
     "passport-oauth2": "^1.7.0",
+    "radclient": "^1.0.0",
     "scrypt-mcf": "^1.0.0"
   }
 }
