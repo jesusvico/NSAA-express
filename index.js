@@ -1,22 +1,22 @@
-const express = require('express')
 const logger = require('morgan')
-const passport = require('passport')
-const LocalStrategy = require('passport-local').Strategy
 const jwt = require('jsonwebtoken')
 const jwtSecret = require('crypto').randomBytes(16) // 16*8=256 random bits
 const cookieParser = require('cookie-parser')
 const fortune = require('fortune-teller')
 const scryptMcf = require('scrypt-mcf')
 const fs = require('fs');
-const { performance } = require('perf_hooks');
+
+const express = require('express');
+const session = require('express-session');
+
+const passport = require('passport');
+const LocalStrategy = require('passport-local').Strategy;
 const OAuth2Strategy = require('passport-oauth2');
-const path = require('path');
+const GoogleStrategy = require('passport-google-oidc');
 
-const app = express()
-const port = 3000
+const app = express();
+const port = 3000;
 
-app.use(logger('dev')); // Logs for development
-app.use(cookieParser()); // Parse cookies correctly
 
 // Custom middleware to check if cookies are valid
 const isAuthenticated = (req, res, next) => {
@@ -26,7 +26,7 @@ const isAuthenticated = (req, res, next) => {
   }
 
   if (req.user) next(); // User is logged in
-  else res.redirect('/auth/error'); // Redirect to login route
+  else res.redirect('/login'); // Redirect to login route
 };
 
 /*
@@ -71,15 +71,28 @@ passport.use('oauth2-github', new OAuth2Strategy(
     authorizationURL: 'https://github.com/login/oauth/authorize',
     tokenURL: 'https://github.com/login/oauth/access_token',
     clientID: '468283da79286228955a',
-    clientSecret: process.env.GITHUB_CLIENT_SECRET,
-    callbackURL: 'http://localhost:3000/auth/github/callback'
+    clientSecret: process.env.GITHUB_OAUTH2_SECRET,
+    callbackURL: 'http://localhost:3000/oauth2/github/callback'
   },
-(accessToken, refreshToken, profile, done) => {
-  // OAuth2 does not provide any information about the user. We only know a unique access token
-  // We use that access token to identify the user
-  profile = { accessToken: accessToken }
-  return done(null, profile);
-})
+  (accessToken, refreshToken, profile, done) => {
+    // OAuth2 does not provide any information about the user. We only know a unique access token
+    // We use that access token to identify the user
+    profile = { accessToken: accessToken }
+    return done(null, profile);
+  })
+);
+
+// OIDC Google strategy config
+passport.use(new GoogleStrategy({
+    clientID: '465558182301-gvhg1i8mdm8von82lcrot3dtfm6ilode.apps.googleusercontent.com',
+    clientSecret: process.env.GOOGLE_OIDC_SECRET,
+    callbackURL: 'http://localhost:3000/oauth2/google/callback',
+    scope: ['openid', 'profile', 'email'],
+  },
+  (issuer, profile, cb) => {
+    console.log(profile);
+    return cb(null, profile);
+  })
 );
 
 // Generate the session token. The identifier must be a unique string for every user.
@@ -106,9 +119,12 @@ const addSessionJWT = (res, identifier) => {
   res.cookie('session', token, options);
 }
 
+app.use(logger('dev')); // Logs for development
+app.use(cookieParser()); // Parse cookies correctly
 app.use(express.urlencoded({ extended: true })) // Needed to retrieve html form fields (it's a requirement of the local strategy)
-app.use(passport.initialize())  // We load the passport auth middleware to our express application. It should be loaded before any route.
+app.use(session({ secret: 'your_session_secret', resave: false, saveUninitialized: false, })); // Configure express-session middleware required for OIDC
 
+app.use(passport.initialize())  // We load the passport auth middleware to our express application. It should be loaded before any route.
 
 // Routes
 app.get('/', isAuthenticated, (req, res) => {
@@ -133,7 +149,7 @@ app.get('/logout',
   }
 )
 
-// Authentication routes
+// Local strategy routes
 app.post('/login',
   passport.authenticate('username-password', { failureRedirect: '/auth/error', session: false }), // we indicate that this endpoint must pass through our 'username-password' passport strategy, which we defined before
   (req, res) => {
@@ -142,9 +158,10 @@ app.post('/login',
   }
 )
 
-app.get('/auth/github', passport.authenticate('oauth2-github', { failureRedirect: '/auth/error', session: false }));
+// OAuth2 strategy routes
+app.get('/oauth2/github', passport.authenticate('oauth2-github', { failureRedirect: '/auth/error' }));
 app.get(
-  '/auth/github/callback',
+  '/oauth2/github/callback',
   passport.authenticate('oauth2-github', {
     failureRedirect: '/auth/error',
     session: false, // Disable session support 
@@ -152,7 +169,19 @@ app.get(
   (req, res) => {
     addSessionJWT(res, req.user.accessToken);
     res.redirect('/');
+  }
+);
+
+// OIDC Google strategy routes
+app.get('/oauth2/google', passport.authenticate('google'));
+app.get('/oauth2/google/callback',
+  passport.authenticate('google', { failureRedirect: '/auth/error', session: false }),
+  (req, res) => {
+    addSessionJWT(res, req.user.id);
+    console.log(req.user);
+    res.redirect('/');
   });
+
 
 app.use(function (err, req, res, next) {
   console.error(err.stack)
