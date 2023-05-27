@@ -14,6 +14,8 @@ const LocalStrategy = require('passport-local').Strategy;
 const OAuth2Strategy = require('passport-oauth2');
 const GoogleStrategy = require('passport-google-oidc');
 
+const radclient = require('radclient');
+
 const app = express();
 const port = 3000;
 
@@ -92,6 +94,49 @@ passport.use(new GoogleStrategy({
   (issuer, profile, cb) => {
     console.log(profile);
     return cb(null, profile);
+  })
+);
+
+// RADIUS strategy config
+passport.use('local-radius', new LocalStrategy({
+    usernameField: 'username',  // it MUST match the name of the input field for the username in the login HTML formulary
+    passwordField: 'password',  // it MUST match the name of the input field for the password in the login HTML formulary
+    session: false // we will store a JWT in the cookie with all the required session data. Our server does not need to keep a session, it's going to be stateless
+  },
+  async (username, password, done) => { 
+    var packet = {
+      code: 'Access-Request',
+      secret: 'testing123',
+      attributes: [
+        ['User-Name', username],
+        ['User-Password', password]
+      ]
+    };
+
+    var options = {
+      host: '127.0.0.1',
+      timeout: 2000,
+      retries: 3
+    };
+
+    radclient(packet, options, (err, response) => {
+      
+      if (err) {
+        console.error('RADIUS authentication error:', err);
+        return done(null, false); // The RADIUS server is not working
+      }
+
+      if (response.code === 'Access-Accept') {
+        console.log('RADIUS authentication successful');
+        return done(null, username); // Return the username
+      } else if (response.code === 'Access-Reject') {
+        console.log('RADIUS authentication rejected');
+      } else {
+        console.log('RADIUS authentication response:', response);
+      }
+
+      return done(null, false); // The user does not exist
+    })
   })
 );
 
@@ -180,7 +225,18 @@ app.get('/oauth2/google/callback',
     addSessionJWT(res, req.user.id);
     console.log(req.user);
     res.redirect('/');
-  });
+  }
+);
+
+// RADIUS strategy routes
+app.post('/radius-login',
+  passport.authenticate('local-radius', { failureRedirect: '/auth/error', session: false }), // we indicate that this endpoint must pass through our 'username-password' passport strategy, which we defined before
+  (req, res) => {
+    console.log("RADIUS USER: " + req.user);
+    addSessionJWT(res, req.user);
+    res.redirect('/');
+  }
+);
 
 
 app.use(function (err, req, res, next) {
